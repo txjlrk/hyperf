@@ -5,7 +5,7 @@ declare(strict_types=1);
  * This file is part of Hyperf.
  *
  * @link     https://www.hyperf.io
- * @document https://doc.hyperf.io
+ * @document https://hyperf.wiki
  * @contact  group@hyperf.io
  * @license  https://github.com/hyperf/hyperf/blob/master/LICENSE
  */
@@ -45,6 +45,11 @@ class DecoderTest extends AbstractTestCase
         $packet = $decoder->decode('215');
         $this->assertEquals('15', $packet['id']);
         $this->assertEquals('2', $packet['type']);
+        $this->assertEquals('/', $packet['nsp']);
+        $this->assertEquals([], $packet['data']);
+        $packet = $decoder->decode('1');
+        $this->assertEquals('', $packet['id']);
+        $this->assertEquals('1', $packet['type']);
         $this->assertEquals('/', $packet['nsp']);
         $this->assertEquals([], $packet['data']);
     }

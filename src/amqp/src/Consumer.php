@@ -5,7 +5,7 @@ declare(strict_types=1);
  * This file is part of Hyperf.
  *
  * @link     https://www.hyperf.io
- * @document https://doc.hyperf.io
+ * @document https://hyperf.wiki
  * @contact  group@hyperf.io
  * @license  https://github.com/hyperf/hyperf/blob/master/LICENSE
  */
@@ -37,7 +37,7 @@ class Consumer extends Builder
     protected $status = true;
 
     /**
-     * @var EventDispatcherInterface
+     * @var null|EventDispatcherInterface
      */
     protected $eventDispatcher;
 
@@ -66,7 +66,7 @@ class Consumer extends Builder
         $channel = $connection->getConfirmChannel();
 
         $this->declare($consumerMessage, $channel);
-        $concurrent = $this->getConcurrent();
+        $concurrent = $this->getConcurrent($consumerMessage->getPoolName());
 
         $maxConsumption = $consumerMessage->getMaxConsumption();
         $currentConsumption = 0;
@@ -87,7 +87,7 @@ class Consumer extends Builder
                     return parallel([$callback]);
                 }
 
-                return $concurrent->create($callback);
+                $concurrent->create($callback);
             }
         );
 
@@ -137,10 +137,10 @@ class Consumer extends Builder
         }
     }
 
-    protected function getConcurrent(): ?Concurrent
+    protected function getConcurrent(string $pool): ?Concurrent
     {
         $config = $this->container->get(ConfigInterface::class);
-        $concurrent = (int) $config->get('amqp.' . $this->name . '.concurrent.limit', 0);
+        $concurrent = (int) $config->get('amqp.' . $pool . '.concurrent.limit', 0);
         if ($concurrent > 1) {
             return new Concurrent($concurrent);
         }

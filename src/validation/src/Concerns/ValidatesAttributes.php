@@ -5,7 +5,7 @@ declare(strict_types=1);
  * This file is part of Hyperf.
  *
  * @link     https://www.hyperf.io
- * @document https://doc.hyperf.io
+ * @document https://hyperf.wiki
  * @contact  group@hyperf.io
  * @license  https://github.com/hyperf/hyperf/blob/master/LICENSE
  */
@@ -1215,8 +1215,11 @@ trait ValidatesAttributes
      *
      * @return null|\DateTime
      */
-    protected function getDateTimeWithOptionalFormat(string $format, string $value)
+    protected function getDateTimeWithOptionalFormat(string $format, ?string $value)
     {
+        if (is_null($value)) {
+            return null;
+        }
         if ($date = DateTime::createFromFormat('!' . $format, $value)) {
             return $date;
         }

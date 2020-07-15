@@ -5,17 +5,20 @@ declare(strict_types=1);
  * This file is part of Hyperf.
  *
  * @link     https://www.hyperf.io
- * @document https://doc.hyperf.io
+ * @document https://hyperf.wiki
  * @contact  group@hyperf.io
  * @license  https://github.com/hyperf/hyperf/blob/master/LICENSE
  */
 namespace Hyperf\SocketIOServer\Room;
 
+use Hyperf\SocketIOServer\Emitter\Flagger;
 use Hyperf\SocketIOServer\SidProvider\SidProviderInterface;
 use Hyperf\WebSocketServer\Sender;
 
 class MemoryAdapter implements AdapterInterface
 {
+    use Flagger;
+
     protected $rooms = [];
 
     protected $sids = [];
@@ -72,12 +75,7 @@ class MemoryAdapter implements AdapterInterface
         $except = data_get($opts, 'except', []);
         $volatile = data_get($opts, 'flag.volatile', false);
         $compress = data_get($opts, 'flag.compress', false);
-        if ($compress) {
-            $wsFlag = SWOOLE_WEBSOCKET_FLAG_FIN | SWOOLE_WEBSOCKET_FLAG_COMPRESS;
-        } else {
-            $wsFlag = SWOOLE_WEBSOCKET_FLAG_FIN;
-        }
-
+        $wsFlag = $this->guessFlags((bool) $compress);
         $pushed = [];
         if (! empty($rooms)) {
             foreach ($rooms as $room) {

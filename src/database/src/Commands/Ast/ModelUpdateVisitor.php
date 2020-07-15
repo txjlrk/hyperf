@@ -5,12 +5,15 @@ declare(strict_types=1);
  * This file is part of Hyperf.
  *
  * @link     https://www.hyperf.io
- * @document https://doc.hyperf.io
+ * @document https://hyperf.wiki
  * @contact  group@hyperf.io
  * @license  https://github.com/hyperf/hyperf/blob/master/LICENSE
  */
 namespace Hyperf\Database\Commands\Ast;
 
+use Hyperf\Contract\Castable;
+use Hyperf\Contract\CastsAttributes;
+use Hyperf\Contract\CastsInboundAttributes;
 use Hyperf\Database\Commands\ModelOption;
 use Hyperf\Database\Model\Builder;
 use Hyperf\Database\Model\Collection;
@@ -25,7 +28,6 @@ use Hyperf\Database\Model\Relations\MorphMany;
 use Hyperf\Database\Model\Relations\MorphOne;
 use Hyperf\Database\Model\Relations\MorphTo;
 use Hyperf\Database\Model\Relations\MorphToMany;
-use Hyperf\Database\Model\Relations\Relation;
 use Hyperf\Utils\Str;
 use PhpParser\Comment\Doc;
 use PhpParser\Node;
@@ -35,6 +37,7 @@ use Roave\BetterReflection\Reflection\ReflectionClass;
 use Roave\BetterReflection\Reflection\ReflectionMethod;
 use Roave\BetterReflection\Reflector\ClassReflector;
 use Roave\BetterReflection\TypesFinder\FindReturnType;
+use RuntimeException;
 
 class ModelUpdateVisitor extends NodeVisitorAbstract
 {
@@ -53,7 +56,7 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
     ];
 
     /**
-     * @var string
+     * @var Model
      */
     protected $class;
 
@@ -78,20 +81,18 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
     protected $properties = [];
 
     /**
-     * @deprecated v2.0
      * @var ClassReflector
      */
     protected static $reflector;
 
     /**
-     * @deprecated v2.0
      * @var FindReturnType
      */
     protected static $return;
 
     public function __construct($class, $columns, ModelOption $option)
     {
-        $this->class = $class;
+        $this->class = new $class();
         $this->columns = $columns;
         $this->option = $option;
         $this->initPropertiesFromMethods();
@@ -129,9 +130,32 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
     protected function rewriteCasts(Node\Stmt\PropertyProperty $node): Node\Stmt\PropertyProperty
     {
         $items = [];
+        $keys = [];
+        if ($node->default instanceof Node\Expr\Array_) {
+            $items = $node->default->items;
+        }
+
+        if ($this->option->isForceCasts()) {
+            $items = [];
+            $casts = $this->class->getCasts();
+            foreach ($node->default->items as $item) {
+                $caster = $this->class->getCasts()[$item->key->value] ?? null;
+                if ($caster && $this->isCaster($caster)) {
+                    $items[] = $item;
+                }
+            }
+        }
+
+        foreach ($items as $item) {
+            $keys[] = $item->key->value;
+        }
+
         foreach ($this->columns as $column) {
             $name = $column['column_name'];
             $type = $column['cast'] ?? null;
+            if (in_array($name, $keys)) {
+                continue;
+            }
             if ($type || $type = $this->formatDatabaseType($column['data_type'])) {
                 $items[] = new Node\Expr\ArrayItem(
                     new Node\Scalar\String_($type),
@@ -146,11 +170,24 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
         return $node;
     }
 
+    /**
+     * @param object|string $caster
+     */
+    protected function isCaster($caster): bool
+    {
+        return is_subclass_of($caster, CastsAttributes::class) ||
+            is_subclass_of($caster, Castable::class) ||
+            is_subclass_of($caster, CastsInboundAttributes::class);
+    }
+
     protected function parseProperty(): string
     {
         $doc = '/**' . PHP_EOL;
         foreach ($this->columns as $column) {
             [$name, $type, $comment] = $this->getProperty($column);
+            if (array_key_exists($name, $this->properties)) {
+                continue;
+            }
             $doc .= sprintf(' * @property %s $%s %s', $type, $name, $comment) . PHP_EOL;
         }
         foreach ($this->properties as $name => $property) {
@@ -174,12 +211,10 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
     protected function initPropertiesFromMethods()
     {
         /** @var ReflectionClass $reflection */
-        $reflection = self::getReflector()->reflect($this->class);
+        $reflection = self::getReflector()->reflect(get_class($this->class));
         $methods = $reflection->getImmediateMethods();
         $namespace = $reflection->getDeclaringNamespaceAst();
-        if (empty($methods)) {
-            return;
-        }
+        $casts = $this->class->getCasts();
 
         sort($methods);
         /** @var ReflectionMethod $method */
@@ -226,27 +261,50 @@ class ModelUpdateVisitor extends NodeVisitorAbstract
                     $expr instanceof Node\Expr\MethodCall
                     && $expr->name instanceof Node\Identifier
                     && is_string($expr->name->name)
-                    && isset($expr->args[0])
-                    && $expr->args[0] instanceof Node\Arg
                 ) {
+                    $loop = 0;
+                    while ($expr->var instanceof Node\Expr\MethodCall) {
+                        if ($loop > 32) {
+                            throw new RuntimeException('max loop reached!');
+                        }
+                        ++$loop;
+                        $expr = $expr->var;
+                    }
                     $name = $expr->name->name;
                     if (array_key_exists($name, self::RELATION_METHODS)) {
-                        if ($expr->args[0]->value instanceof Node\Expr\ClassConstFetch) {
-                            $related = $expr->args[0]->value->class->toCodeString();
-                        } else {
-                            $related = (string) ($expr->args[0]->value);
-                        }
-
-                        if (strpos($name, 'Many') !== false) {
-                            // Collection or array of models (because Collection is Arrayable)
-                            $this->setProperty($method->getName(), [$this->getCollectionClass($related), $related . '[]'], true);
-                        } elseif ($name === 'morphTo') {
+                        if ($name === 'morphTo') {
                             // Model isn't specified because relation is polymorphic
-                            $this->setProperty($method->getName(), [Model::class], true);
-                        } else {
-                            // Single model is returned
-                            $this->setProperty($method->getName(), [$related], true);
+                            $this->setProperty($method->getName(), ['\\' . Model::class], true);
+                        } elseif (isset($expr->args[0]) && $expr->args[0]->value instanceof Node\Expr\ClassConstFetch) {
+                            $related = $expr->args[0]->value->class->toCodeString();
+                            if (strpos($name, 'Many') !== false) {
+                                // Collection or array of models (because Collection is Arrayable)
+                                $this->setProperty($method->getName(), [$this->getCollectionClass($related), $related . '[]'], true);
+                            } else {
+                                // Single model is returned
+                                $this->setProperty($method->getName(), [$related], true);
+                            }
                         }
+                    }
+                }
+            }
+        }
+
+        // The custom caster.
+        foreach ($casts as $key => $caster) {
+            if (is_subclass_of($caster, Castable::class)) {
+                $caster = $caster::castUsing();
+            }
+
+            if (is_subclass_of($caster, CastsAttributes::class)) {
+                $ref = self::getReflector()->reflect($caster);
+                $method = $ref->getMethod('get');
+                if ($ast = $method->getReturnStatementsAst()[0]) {
+                    if ($ast instanceof Node\Stmt\Return_
+                        && $ast->expr instanceof Node\Expr\New_
+                        && $ast->expr->class instanceof Node\Name\FullyQualified
+                    ) {
+                        $this->setProperty($key, [$ast->expr->class->toCodeString()], true, true);
                     }
                 }
             }

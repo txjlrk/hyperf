@@ -5,7 +5,7 @@ declare(strict_types=1);
  * This file is part of Hyperf.
  *
  * @link     https://www.hyperf.io
- * @document https://doc.hyperf.io
+ * @document https://hyperf.wiki
  * @contact  group@hyperf.io
  * @license  https://github.com/hyperf/hyperf/blob/master/LICENSE
  */
@@ -97,5 +97,18 @@ class SocketTest extends AbstractTestCase
         $socket3->join('room');
         $socket1->to('room')->emit('hello');
         $this->assertTrue(true);
+    }
+
+    public function testBroadcast()
+    {
+        $socket1 = make(Socket::class, [
+            'fd' => 1,
+            'nsp' => '/',
+        ]);
+        $reflection = new \ReflectionClass(Socket::class);
+        $prop = $reflection->getProperty('broadcast');
+        $prop->setAccessible(true);
+        $this->assertFalse($prop->getValue($socket1));
+        $this->assertTrue($prop->getValue($socket1->broadcast));
     }
 }

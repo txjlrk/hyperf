@@ -5,7 +5,7 @@ declare(strict_types=1);
  * This file is part of Hyperf.
  *
  * @link     https://www.hyperf.io
- * @document https://doc.hyperf.io
+ * @document https://hyperf.wiki
  * @contact  group@hyperf.io
  * @license  https://github.com/hyperf/hyperf/blob/master/LICENSE
  */
@@ -94,6 +94,13 @@ class RoomAdapterTest extends AbstractTestCase
         $room->broadcast('', ['rooms' => ['universe'], 'flag' => ['local' => true]]);
         $room->cleanUp();
         $this->assertNotContains('42', $room->clientRooms('42'));
+
+        // Test empty room
+        try {
+            $room->del('non-exist');
+        } catch (\Throwable $t) {
+            $this->assertTrue(false);
+        }
     }
 
     private function getRedis($options = [])
